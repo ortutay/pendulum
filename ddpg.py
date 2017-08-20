@@ -51,16 +51,12 @@ class NeuralNetwork(object):
             prev_out = layers[-1]
         self.out = prev_out
 
+        self.targets = tf.placeholder(tf.float32, [None, outputs[-1]])
+        self.loss = .5 * tf.pow(self.out - self.targets, 2)
+        self.train_step = tf.train.GradientDescentOptimizer(.05).minimize(self.loss)
+
     def eval(self, x):
         return self.sess.run(self.out, feed_dict={self.x: x})
-
-    def train(self, batch_x, batch_actions, batch_x_, batch_r):
-        fd = {
-            self.x: batch_x,
-            self.actions: batch_actions,
-            self.x_: batch_x_,
-            self.r: batch_r,
-        }
 
 
 class Actor(object):
@@ -76,7 +72,18 @@ class Critic(object):
         self.nn = NeuralNetwork(sess, state_dim + action_dim, hidden_layers + [1])
 
     def eval(self, states, actions):
+        #print 'states actions', states, actions
         return self.nn.eval(np.concatenate([states, actions], axis=1))
+
+    def train(self, prev_states, next_states, actions, rewards, computed_actions):
+        print 'all args', prev_states, next_states, actions, rewards, computed_actions
+        #print next_states, computed_actions
+        targets = np.sum([self.eval(next_states, computed_actions), rewards], axis=0)
+        print 'targets', targets
+        self.nn.sess.run(self.nn.train_step, feed_dict={
+            self.nn.targets: [targets],
+            self.nn.x: np.concatenate([prev_states, actions], axis=1)
+        })
 
 
 class Pendulum(object):
@@ -98,8 +105,14 @@ class Pendulum(object):
 
             new_obs, reward, done, _ = self.env.step(action)
             real_reward = int(not done)
-            new_memory = (obs, action, new_obs, float(real_reward))
-            print (new_memory, value, action)
+            # new_memory = ()
+#            memories.append(new_memory[0:4])
+            self.critic.train(
+                prev_states=[obs],
+                next_states=[new_obs],
+                actions=[action],
+                rewards=[float(real_reward)],
+                computed_actions=actor.eval([new_obs]))
             obs = new_obs
         return i
 
