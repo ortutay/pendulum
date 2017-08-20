@@ -19,15 +19,6 @@ ACTIONS_DIM = 1
 
 pp = pprint.PrettyPrinter()
 
-class Policy(object):
-    def __init__(self, sess, input_dim=INPUT_DIM, actions_dim=ACTIONS_DIM):
-        self.sess = sess
-        self.input_dim = input_dim
-        self.actions_dim = actions_dim
-
-        minv = -.001
-        maxv = .001
-
 
 class NeuralNetwork(object):
     def __init__(self, sess, input_dim, outputs):
@@ -58,12 +49,10 @@ class NeuralNetwork(object):
             layers.append(layer)
             prev_n = n
             prev_out = layers[-1]
-        self.value = prev_out
-
-        # compute gradient
+        self.out = prev_out
 
     def eval(self, x):
-        return self.sess.run(self.value, feed_dict={self.x: x})
+        return self.sess.run(self.out, feed_dict={self.x: x})
 
     def train(self, batch_x, batch_actions, batch_x_, batch_r):
         fd = {
@@ -74,19 +63,27 @@ class NeuralNetwork(object):
         }
 
 
-class Value(object):
-    def __init__(self, sess, state_dim=3, action_dim=1, outputs=[100, 50, 1]):
-        self.nn = NeuralNetwork(sess, state_dim + action_dim, outputs)
+class Actor(object):
+    def __init__(self, sess, state_dim=3, action_dim=1, hidden_layers=[100, 50]):
+        self.nn = NeuralNetwork(sess, state_dim, hidden_layers + [action_dim])
+
+    def eval(self, states):
+        return self.nn.eval(states)
+
+
+class Critic(object):
+    def __init__(self, sess, state_dim=3, action_dim=1, hidden_layers=[100, 50]):
+        self.nn = NeuralNetwork(sess, state_dim + action_dim, hidden_layers + [1])
 
     def eval(self, states, actions):
         return self.nn.eval(np.concatenate([states, actions], axis=1))
 
 
 class Pendulum(object):
-    def __init__(self, env, policy, value, render=False):
+    def __init__(self, env, actor, critic, render=False):
         self.env = env
-        self.policy = policy
-        self.value = value
+        self.actor = actor
+        self.critic = critic
         self.render = render
 
     def run_episode(self):
@@ -94,12 +91,16 @@ class Pendulum(object):
         for i in range(MAX_STEPS_PER_EPISODE):
             if self.render:
                 self.env.render()
-            #action = self.model.suggest([obs])[0]
-            action = env.action_space.sample()
+
+            actions = self.actor.eval([obs])
+            value = self.critic.eval([obs], actions)
+            action = actions[0]
+
             new_obs, reward, done, _ = self.env.step(action)
             real_reward = int(not done)
             new_memory = (obs, action, new_obs, float(real_reward))
-            print(new_memory, value.eval([obs], [action]))
+            print (new_memory, value, action)
+            obs = new_obs
         return i
 
 
@@ -113,9 +114,8 @@ class Trainer():
 if __name__ == '__main__':
     sess = tf.Session()
     env = gym.make('Pendulum-v0')
-    policy = Policy(sess)
-    value = Value(sess, state_dim=3, action_dim=1, outputs=[100, 50, 1])
+    actor = Actor(sess, state_dim=3, action_dim=1, hidden_layers=[100, 50])
+    critic = Critic(sess, state_dim=3, action_dim=1, hidden_layers=[100, 50])
     sess.run(tf.global_variables_initializer())
-
-    pend = Pendulum(env, policy, value, render=True)
+    pend = Pendulum(env, actor, critic, render=True)
     pend.run_episode()
