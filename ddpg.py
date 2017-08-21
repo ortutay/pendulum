@@ -72,14 +72,14 @@ class Critic(object):
         self.nn = NeuralNetwork(sess, state_dim + action_dim, hidden_layers + [1])
 
     def eval(self, states, actions):
-        #print 'states actions', states, actions
+        #print('states actions', states, actions)
         return self.nn.eval(np.concatenate([states, actions], axis=1))
 
     def train(self, prev_states, next_states, actions, rewards, computed_actions):
-        print 'all args', prev_states, next_states, actions, rewards, computed_actions
-        #print next_states, computed_actions
+        print('all args', prev_states, next_states, actions, rewards, computed_actions)
+        #print(next_states, computed_actions)
         targets = np.sum([self.eval(next_states, computed_actions), rewards], axis=0)
-        print 'targets', targets
+        print('targets', targets)
         self.nn.sess.run(self.nn.train_step, feed_dict={
             self.nn.targets: [targets],
             self.nn.x: np.concatenate([prev_states, actions], axis=1)
