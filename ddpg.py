@@ -1,6 +1,5 @@
 import random
 import gym
-import pandas as pd
 import numpy as np
 import tensorflow as tf
 import pprint
@@ -17,6 +16,7 @@ NUM_EPISODES = 150
 OPEN_AI_KEY = os.environ.get('OPEN_AI_KEY')
 INPUT_DIM = 3
 ACTION_DIM = 1
+DISCOUNT_RATE = .4
 
 pp = pprint.PrettyPrinter()
 
@@ -68,6 +68,18 @@ class Actor(object):
     def eval(self, states):
         return self.nn.eval(states)
 
+    def train(self, memory, actor, critic):
+        (x, x_, a, r) = list(zip(*memory))
+        # Steps:
+        action_gradient = tf.placeholder(tf.float32, [None, ACTION_DIM])
+
+        # (1) Get action gradient from critic
+        action_gradients = critic.action_gradients()
+
+        # (2) Get network gradients
+        # (3) Combine the gradients using chain rule
+        # (4) Apply using Adam optimizer
+
 
 class Critic(object):
     def __init__(self, sess, state_dim=3, action_dim=1, hidden_layers=[100, 50]):
@@ -80,15 +92,8 @@ class Critic(object):
         self.train_step = tf.train.GradientDescentOptimizer(.05).minimize(self.loss)
 
     def eval(self, states, actions):
-        # print('states actions', states, actions)
-        
-        # return self.nn.eval(np.concatenate([states, actions], axis=1))
-
         state_action = np.concatenate([states, actions], axis=1)
-        print('state x action', state_action)
         result = self.nn.eval(state_action)
-        print('result', result)
-        print('weights', self.nn.sess.run(self.nn.weights))
         return result
 
     # np arrays
@@ -97,12 +102,19 @@ class Critic(object):
         # print('x, x_, a, r', x, x_, a, r)
         u = actor.eval(x_)
         q_ = critic.eval(x_, u)
-        targets = r + q_
+
+        # TODO: math, convert to log space?
+        discount_rate = .95
+        targets = np.tanh(discount_rate * (r + q_))
+
         # calculate and apply gradient
         self.nn.sess.run(self.train_step, feed_dict={
             self.targets: targets,
             self.nn.x: np.concatenate([x, a], axis=1)
         })
+
+    def action_gradients(self):
+        raise NotImplemented('TODO')
 
 
 class Pendulum(object):
@@ -120,19 +132,22 @@ class Pendulum(object):
 
             action = self.actor.eval([obs])[0]
             new_obs, reward, done, _ = self.env.step(action)
-            real_reward = int(not done)
-            event = (obs, new_obs, action, real_reward)
+            event = (obs, new_obs, action, reward)
             memory.store(event)
 
             target_actor = actor
             target_critic = critic
 
-            print('event', event, 'expected q-value: ', critic.eval([new_obs], [action]))
+            print('expected q-value: %s, reward: %s' % (critic.eval([new_obs], [action]), reward))
 
             self.critic.train(
                 memory=memory.retrieve(5),
                 actor=target_actor,
                 critic=target_critic)
+
+            if i % 100 == 0:
+                import pdb; pdb.set_trace()
+
             # self.critic.train(
             #     x=[obs],
             #     x_=[new_obs],
@@ -197,7 +212,31 @@ if __name__ == '__main__':
     env = gym.make('Pendulum-v0')
     actor = Actor(sess, state_dim=3, action_dim=1, hidden_layers=[100, 50])
     critic = Critic(sess, state_dim=3, action_dim=1, hidden_layers=[100, 50])
-    memory = Memory(state_dim=3, action_dim=1, maxlength=100)
+
+    states_data = [
+        [1, 2, 3],
+        [-2, 3, 4.5],
+    ]
+    # a = actor.eval(states_data)
+    # print('the action is:', a)
+
+    states = tf.placeholder(tf.float32, [None, 3])
+    a_var = tf.get_variable("action", [1], dtype=tf.float32)
+    loss = tf.reduce_sum(states + a_var)
+    a_grad = tf.gradients(loss, [a_var])
+
     sess.run(tf.global_variables_initializer())
-    pend = Pendulum(env, actor, critic, memory, render=True)
-    pend.run_episode()
+
+    print('A gradient', a_grad)
+    print('A gradient runn:', sess.run(a_grad, {
+        states: states_data,
+    }))
+
+    # result = sess.run({
+    #     states: states_data,
+    # })
+
+    # memory = Memory(state_dim=3, action_dim=1, maxlength=100)
+    # sess.run(tf.global_variables_initializer())
+    # pend = Pendulum(env, actor, critic, memory, render=True)
+    # pend.run_episode()
