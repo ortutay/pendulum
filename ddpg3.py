@@ -102,7 +102,6 @@ class Critic:
         #
         # which seems like a typo? but take another look at this...
         self.loss = tf.pow(self.predicted_total_reward - self.out, 2)
-        # self.loss = self.predicted_total_reward - tf.pow(self.out, 2)
 
         self.train_step = tf.train.AdamOptimizer(.01).minimize(self.loss)
         # self.train_step = tf.train.GradientDescentOptimizer(.01).minimize(self.loss)
