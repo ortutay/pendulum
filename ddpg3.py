@@ -18,9 +18,9 @@ NUM_EPISODES = 150
 OPEN_AI_KEY = os.environ.get('OPEN_AI_KEY')
 INPUT_DIM = 3
 ACTION_DIM = 1
-DISCOUNT_RATE = .95
+DISCOUNT_RATE = .9
 TAU = .05
-LEARNING_RATE = .01
+LEARNING_RATE = .001
 
 init_hack = False
 
@@ -30,8 +30,9 @@ pp = pprint.PrettyPrinter()
 class Actor:
     def __init__(self, sess, state_dim=3, action_dim=1, hidden_layers=[100, 50]):
         self.sess = sess
+        self.optimizer = tf.train.GradientDescentOptimizer(.05)
         # self.optimizer = tf.train.AdamOptimizer(LEARNING_RATE)
-        self.optimizer = tf.train.GradientDescentOptimizer(LEARNING_RATE)
+        # sess.run(tf.variables_initializer(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='beta1_power')))
 
         input_dim = state_dim
         layers = hidden_layers + [action_dim]
@@ -64,7 +65,7 @@ class Actor:
             prev_n = n
             prev_out = layer
         # Action should range from -2 to 2
-        self.out = 2 * tf.nn.tanh(prev_out)
+        self.out = 2 * tf.nn.tanh(prev_out / 10)
 
     def get_actions(self, states):
         return self.sess.run(self.out, feed_dict={
@@ -73,7 +74,6 @@ class Actor:
 
     def train(self, memory, target_critic, num, var_list):
         states = memory.get_column('state', num)
-
         loss = -target_critic.out
         train_step = self.optimizer.minimize(loss, var_list=var_list)
         self.sess.run(train_step, feed_dict={
@@ -86,6 +86,7 @@ class Critic:
     def __init__(self, sess, input_state=None, input_action=None, state_dim=3, action_dim=1, hidden_layers=[100, 50]):
         self.sess = sess
         # self.optimizer = tf.train.AdamOptimizer(LEARNING_RATE)
+        # sess.run(tf.variables_initializer(tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='beta1_power')))
         self.optimizer = tf.train.GradientDescentOptimizer(LEARNING_RATE)
 
         input_dim = state_dim + action_dim
@@ -165,7 +166,7 @@ class Critic:
 
 class Pendulum:
     def __init__(self, sess, env, actor, critic, target_actor, target_critic,
-                 memory, render=True):
+                 memory, render=False):
         self.sess = sess
         self.env = env
         self.actor = actor
@@ -180,22 +181,22 @@ class Pendulum:
         total_reward = 0
 
         # Run the episode
-        noise_std = 4
-        noise_rate = 0.995
+        noise_rate = 0.5
         for i in range(max_steps):
-            if self.render:
-                self.env.render()
+            # if test_run:
+            #     self.env.render()
 
             action = self.actor.get_actions([prev_obs])[0]
-            # if not test_run:
-            #     noise_std *= noise_rate
-            #     action += np.random.normal(0, noise_std)
+            if not test_run:
+                # noise_rate *= noise_rate
+                action = noise_rate * np.random.normal(-2, 2) + (1 - noise_rate) * action
 
             critic_value = self.critic.eval([prev_obs], [action])[0][0]
             obs, reward, done, _ = self.env.step(action)
             self.memory.save(prev_obs, action, reward, obs)
-            print('obs: %s, action: %s, reward: %s, total_reward: %s, critic says: %s' % (
-                obs, action, reward, total_reward, critic_value))
+            if test_run:
+                print('obs: %s, action: %s, reward: %s, total_reward: %s, critic says: %s' % (
+                    obs, action, reward, total_reward, critic_value))
             prev_obs = obs
             total_reward += reward
             if done:
@@ -206,10 +207,10 @@ class Pendulum:
             return
 
         # Train
-        for _ in range(min(100, int(self.memory.size() / 100))):
+        for _ in range(min(10, int(self.memory.size() / 100))):
             n = 100
-            critic_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='critic')
-            actor_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='actor')
+            critic_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='main_critic')
+            actor_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='main_actor')
             target_critic_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target_critic')
             target_actor_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target_actor')
 
@@ -236,12 +237,16 @@ class Memory:
 
     def save(self, state, action, reward, next_state):
         # TODO: use numpy arrays/make this more efficient
-        self.memories.append({
+        item = {
             'state': list(state),
             'action': list(action),
             'reward': [reward],
             'next_state': list(next_state),
-        })
+        }
+        if len(self.memories) > 100000:
+            self.memories[np.random.randint(len(self.memories))] = item
+        else:
+            self.memories.append(item)
 
     def get_column(self, col_name, num):
         rows = np.random.choice(np.array(self.memories), num)
@@ -255,18 +260,24 @@ if __name__ == '__main__':
     sess = tf.Session()
     env = gym.make('Pendulum-v0')
 
-    hidden_layers = [20, 20]
+    hidden_layers = [100, 50]
 
-    with tf.name_scope('critic'):
+    with tf.name_scope('main_critic'):
         critic = Critic(sess, hidden_layers=hidden_layers)
-    with tf.name_scope('actor'):
+    with tf.name_scope('main_actor'):
         actor = Actor(sess, hidden_layers=hidden_layers)
 
     with tf.name_scope('target_critic'):
-        target_critic = Critic(sess, input_state=actor.input_state,
-                               input_action=actor.out, hidden_layers=hidden_layers)
+        target_critic = Critic(
+            sess, input_state=actor.input_state, input_action=actor.out, hidden_layers=hidden_layers)
     with tf.name_scope('target_actor'):
         target_actor = Actor(sess, hidden_layers=hidden_layers)
+
+    # TODO: refactor this!
+    critic_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='main_critic')
+    actor_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='main_actor')
+    target_critic_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target_critic')
+    target_actor_vars = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope='target_actor')
 
     memory = Memory()
     pendulum = Pendulum(
@@ -274,7 +285,7 @@ if __name__ == '__main__':
         memory, render=False)
 
     sess.run(tf.global_variables_initializer())
-    num_episodes = 50
+    num_episodes = 1000
     for i in range(num_episodes):
         print(i)
         pendulum.run_episode(max_steps=200)
